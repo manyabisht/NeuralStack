@@ -38,7 +38,7 @@ async function askGemini(systemPrompt, userPrompt, maxTokens = 1024) {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error('GEMINI_API_KEY is not set in environment variables.');
 
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
 
   const body = {
     system_instruction: { parts: [{ text: systemPrompt }] },
@@ -70,7 +70,7 @@ async function askGemini(systemPrompt, userPrompt, maxTokens = 1024) {
 app.get('/api/health', (_req, res) => {
   res.json({
     status: 'ok',
-    model: 'gemini-1.5-flash',
+    model: 'gemini-2.0-flash',
     timestamp: new Date().toISOString(),
   });
 });
