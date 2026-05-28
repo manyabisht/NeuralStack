@@ -10,7 +10,18 @@ const PORT = process.env.PORT || 3001;
 // ─── Security ────────────────────────────────────────────────────────────────
 app.use(helmet());
 app.use(cors({
-  origin: process.env.CLIENT_ORIGIN || 'http://localhost:3000',
+  origin: function(origin, callback) {
+    const allowed = [
+      process.env.CLIENT_ORIGIN,
+      'http://localhost:3000',
+    ];
+    // Allow any vercel.app preview URL
+    if (!origin || allowed.includes(origin) || origin.endsWith('.vercel.app')) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   methods: ['POST', 'GET'],
 }));
 app.use(express.json({ limit: '50kb' }));
