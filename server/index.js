@@ -15,7 +15,6 @@ app.use(cors({
       process.env.CLIENT_ORIGIN,
       'http://localhost:3000',
     ];
-    // Allow any vercel.app preview URL
     if (!origin || allowed.includes(origin) || origin.endsWith('.vercel.app')) {
       callback(null, true);
     } else {
@@ -33,36 +32,38 @@ const limiter = rateLimit({
 });
 app.use('/api/', limiter);
 
-// ─── Gemini Helper ────────────────────────────────────────────────────────────
-async function askGemini(systemPrompt, userPrompt, maxTokens = 1024) {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) throw new Error('GEMINI_API_KEY is not set in environment variables.');
+// ─── Groq Helper ──────────────────────────────────────────────────────────────
+async function askGroq(systemPrompt, userPrompt, maxTokens = 1024) {
+  const apiKey = process.env.GROQ_API_KEY;
+  if (!apiKey) throw new Error('GROQ_API_KEY is not set in environment variables.');
 
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
-
-  const body = {
-    system_instruction: { parts: [{ text: systemPrompt }] },
-    contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
-    generationConfig: { maxOutputTokens: maxTokens, temperature: 0.7 },
-  };
-
-  const res = await fetch(url, {
+  const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: 'llama-3.1-8b-instant',
+      max_tokens: maxTokens,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user',   content: userPrompt },
+      ],
+    }),
   });
 
   const data = await res.json();
 
   if (!res.ok) {
-    const msg = data?.error?.message || `Gemini API error ${res.status}`;
+    const msg = data?.error?.message || `Groq API error ${res.status}`;
     const err = new Error(msg);
     err.status = res.status;
     throw err;
   }
 
-  const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!text) throw new Error('Empty response from Gemini.');
+  const text = data?.choices?.[0]?.message?.content;
+  if (!text) throw new Error('Empty response from Groq.');
   return text;
 }
 
@@ -70,31 +71,31 @@ async function askGemini(systemPrompt, userPrompt, maxTokens = 1024) {
 app.get('/api/health', (_req, res) => {
   res.json({
     status: 'ok',
-    model: 'gemini-2.0-flash',
+    model: 'llama-3.1-8b-instant (Groq)',
     timestamp: new Date().toISOString(),
   });
 });
 
-// ─── Generic Gemini Proxy ─────────────────────────────────────────────────────
+// ─── Generic Proxy ────────────────────────────────────────────────────────────
 app.post('/api/claude', async (req, res) => {
   const { prompt, system, max_tokens } = req.body;
   if (!prompt || typeof prompt !== 'string') {
     return res.status(400).json({ error: 'prompt is required and must be a string.' });
   }
   try {
-    const text = await askGemini(
+    const text = await askGroq(
       system || 'You are an expert software engineer and AI researcher. Be concise and technical.',
       prompt,
       max_tokens || 1024
     );
     res.json({ text });
   } catch (err) {
-    console.error('Gemini API error:', err.message);
+    console.error('Groq API error:', err.message);
     res.status(err.status || 500).json({ error: err.message });
   }
 });
 
-// ─── Code Review endpoint ─────────────────────────────────────────────────────
+// ─── Code Review ──────────────────────────────────────────────────────────────
 app.post('/api/review', async (req, res) => {
   const { code, language, mode } = req.body;
   if (!code || !language || !mode) {
@@ -133,7 +134,7 @@ ${code}
   if (!prompts[mode]) return res.status(400).json({ error: 'Invalid mode.' });
 
   try {
-    const text = await askGemini(
+    const text = await askGroq(
       'You are a senior software engineer specializing in code review and DSA. Be concise, precise, and technical.',
       prompts[mode],
       1024
@@ -145,13 +146,13 @@ ${code}
   }
 });
 
-// ─── Complexity Analysis endpoint ─────────────────────────────────────────────
+// ─── Complexity Analysis ──────────────────────────────────────────────────────
 app.post('/api/complexity', async (req, res) => {
   const { code } = req.body;
   if (!code) return res.status(400).json({ error: 'code is required.' });
 
   try {
-    const text = await askGemini(
+    const text = await askGroq(
       'You are a DSA expert. Give precise Big-O analysis.',
       `Analyze the time and space complexity of this code. Format exactly:
 TIME: O(...)
@@ -171,13 +172,13 @@ ${code}`,
   }
 });
 
-// ─── Algorithm Explanation endpoint ──────────────────────────────────────────
+// ─── Algorithm Explanation ────────────────────────────────────────────────────
 app.post('/api/explain-algo', async (req, res) => {
   const { algorithm } = req.body;
   if (!algorithm) return res.status(400).json({ error: 'algorithm is required.' });
 
   try {
-    const text = await askGemini(
+    const text = await askGroq(
       'You are a CS professor explaining algorithms. Be clear and concise.',
       `Explain ${algorithm} in 3-4 sentences. Include: when to use it, its key trade-off vs other sorts. Be concise.`,
       256
@@ -189,7 +190,7 @@ app.post('/api/explain-algo', async (req, res) => {
   }
 });
 
-// ─── Fine-tuning Dataset Generator endpoint ───────────────────────────────────
+// ─── Fine-tuning Dataset Generator ───────────────────────────────────────────
 app.post('/api/finetune', async (req, res) => {
   const { domain, count, format } = req.body;
   if (!domain || !count || !format) {
@@ -205,7 +206,7 @@ app.post('/api/finetune', async (req, res) => {
   if (!formatGuide[format]) return res.status(400).json({ error: 'Invalid format.' });
 
   try {
-    const text = await askGemini(
+    const text = await askGroq(
       'You are a machine learning engineer creating fine-tuning datasets. Output only valid JSON, one per line. No markdown, no preamble.',
       `Generate ${count} high-quality fine-tuning training examples for: "${domain}". Use ${formatGuide[format]}. Each example on a new line. Make them diverse and realistic. Only output the JSON lines, nothing else.`,
       1500
@@ -220,5 +221,5 @@ app.post('/api/finetune', async (req, res) => {
 // ─── Start ────────────────────────────────────────────────────────────────────
 app.listen(PORT, () => {
   console.log(`\n🚀 NeuralStack server running on http://localhost:${PORT}`);
-  console.log(`   Gemini API Key: ${process.env.GEMINI_API_KEY ? '✅ Loaded' : '❌ Missing — set GEMINI_API_KEY in .env'}\n`);
+  console.log(`   Groq API Key: ${process.env.GROQ_API_KEY ? '✅ Loaded' : '❌ Missing — set GROQ_API_KEY in .env'}\n`);
 });
