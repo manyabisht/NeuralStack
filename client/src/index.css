@@ -1,0 +1,37 @@
+/* ─── Reset & Base ──────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --accent:  #7c5cfc;
+  --accent2: #00d4aa;
+  --accent3: #ff6b6b;
+  --bg1: #0a0a0f;
+  --bg2: #111118;
+  --bg3: #1a1a24;
+  --bg4: #22222e;
+  --border: #2a2a38;
+  --text: #e8e6f0;
+  --muted: #888;
+  --font-sans: 'Syne', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+}
+
+html { font-size: 16px; }
+
+body {
+  background: var(--bg1);
+  color: var(--text);
+  font-family: var(--font-sans);
+  min-height: 100vh;
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ─── Scrollbar ──────────────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: var(--bg2); }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #3a3a50; }
+
+/* ─── Utility ────────────────────────────────────────────────────────────────── */
+.hidden { display: none !important; }
