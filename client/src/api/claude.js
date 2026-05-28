@@ -1,6 +1,6 @@
 // All API calls proxy through our Express backend — API key stays server-side.
 
-const BASE = '/api';
+const BASE = process.env.REACT_APP_API_URL || '/api';
 
 async function post(endpoint, body) {
   const res = await fetch(`${BASE}${endpoint}`, {

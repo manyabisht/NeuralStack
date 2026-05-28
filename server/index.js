@@ -3,7 +3,6 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
-const Anthropic = require('@anthropic-ai/sdk');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -17,54 +16,76 @@ app.use(cors({
 app.use(express.json({ limit: '50kb' }));
 
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
+  windowMs: 15 * 60 * 1000,
   max: 50,
   message: { error: 'Too many requests, please try again after 15 minutes.' },
 });
 app.use('/api/', limiter);
 
-// ─── Anthropic Client ─────────────────────────────────────────────────────────
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY,
-});
+// ─── Gemini Helper ────────────────────────────────────────────────────────────
+async function askGemini(systemPrompt, userPrompt, maxTokens = 1024) {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) throw new Error('GEMINI_API_KEY is not set in environment variables.');
+
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+
+  const body = {
+    system_instruction: { parts: [{ text: systemPrompt }] },
+    contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
+    generationConfig: { maxOutputTokens: maxTokens, temperature: 0.7 },
+  };
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+
+  const data = await res.json();
+
+  if (!res.ok) {
+    const msg = data?.error?.message || `Gemini API error ${res.status}`;
+    const err = new Error(msg);
+    err.status = res.status;
+    throw err;
+  }
+
+  const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!text) throw new Error('Empty response from Gemini.');
+  return text;
+}
 
 // ─── Health Check ─────────────────────────────────────────────────────────────
 app.get('/api/health', (_req, res) => {
   res.json({
     status: 'ok',
-    model: 'claude-sonnet-4-20250514',
+    model: 'gemini-1.5-flash',
     timestamp: new Date().toISOString(),
   });
 });
 
-// ─── Generic Claude Proxy ─────────────────────────────────────────────────────
+// ─── Generic Gemini Proxy ─────────────────────────────────────────────────────
 app.post('/api/claude', async (req, res) => {
   const { prompt, system, max_tokens } = req.body;
-
   if (!prompt || typeof prompt !== 'string') {
     return res.status(400).json({ error: 'prompt is required and must be a string.' });
   }
-
   try {
-    const message = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: max_tokens || 1024,
-      system: system || 'You are an expert software engineer and AI researcher. Be concise and technical.',
-      messages: [{ role: 'user', content: prompt }],
-    });
-
-    res.json({ text: message.content[0].text });
+    const text = await askGemini(
+      system || 'You are an expert software engineer and AI researcher. Be concise and technical.',
+      prompt,
+      max_tokens || 1024
+    );
+    res.json({ text });
   } catch (err) {
-    console.error('Anthropic API error:', err.message);
-    const status = err.status || 500;
-    res.status(status).json({ error: err.message || 'Internal server error' });
+    console.error('Gemini API error:', err.message);
+    res.status(err.status || 500).json({ error: err.message });
   }
 });
 
 // ─── Code Review endpoint ─────────────────────────────────────────────────────
 app.post('/api/review', async (req, res) => {
   const { code, language, mode } = req.body;
-
   if (!code || !language || !mode) {
     return res.status(400).json({ error: 'code, language, and mode are required.' });
   }
@@ -101,13 +122,12 @@ ${code}
   if (!prompts[mode]) return res.status(400).json({ error: 'Invalid mode.' });
 
   try {
-    const message = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 1024,
-      system: 'You are a senior software engineer specializing in code review and DSA. Be concise, precise, and technical.',
-      messages: [{ role: 'user', content: prompts[mode] }],
-    });
-    res.json({ text: message.content[0].text });
+    const text = await askGemini(
+      'You are a senior software engineer specializing in code review and DSA. Be concise, precise, and technical.',
+      prompts[mode],
+      1024
+    );
+    res.json({ text });
   } catch (err) {
     console.error('Review error:', err.message);
     res.status(err.status || 500).json({ error: err.message });
@@ -120,13 +140,9 @@ app.post('/api/complexity', async (req, res) => {
   if (!code) return res.status(400).json({ error: 'code is required.' });
 
   try {
-    const message = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 512,
-      system: 'You are a DSA expert. Give precise Big-O analysis.',
-      messages: [{
-        role: 'user',
-        content: `Analyze the time and space complexity of this code. Format exactly:
+    const text = await askGemini(
+      'You are a DSA expert. Give precise Big-O analysis.',
+      `Analyze the time and space complexity of this code. Format exactly:
 TIME: O(...)
 SPACE: O(...)
 LOOP DEPTH: N
@@ -135,9 +151,9 @@ OPTIMIZATION: One key suggestion
 
 Code:
 ${code}`,
-      }],
-    });
-    res.json({ text: message.content[0].text });
+      512
+    );
+    res.json({ text });
   } catch (err) {
     console.error('Complexity error:', err.message);
     res.status(err.status || 500).json({ error: err.message });
@@ -150,16 +166,12 @@ app.post('/api/explain-algo', async (req, res) => {
   if (!algorithm) return res.status(400).json({ error: 'algorithm is required.' });
 
   try {
-    const message = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 256,
-      system: 'You are a CS professor explaining algorithms. Be clear and concise.',
-      messages: [{
-        role: 'user',
-        content: `Explain ${algorithm} sort in 3-4 sentences. Include: when to use it, its key trade-off vs other sorts. Be concise.`,
-      }],
-    });
-    res.json({ text: message.content[0].text });
+    const text = await askGemini(
+      'You are a CS professor explaining algorithms. Be clear and concise.',
+      `Explain ${algorithm} in 3-4 sentences. Include: when to use it, its key trade-off vs other sorts. Be concise.`,
+      256
+    );
+    res.json({ text });
   } catch (err) {
     console.error('Explain-algo error:', err.message);
     res.status(err.status || 500).json({ error: err.message });
@@ -174,24 +186,20 @@ app.post('/api/finetune', async (req, res) => {
   }
 
   const formatGuide = {
-    jsonl: 'JSONL format: {"messages":[{"role":"system","content":"..."},{"role":"user","content":"..."},{"role":"assistant","content":"..."}]}',
-    alpaca: 'Alpaca format: {"instruction":"...","input":"...","output":"..."}',
+    jsonl:    'JSONL format: {"messages":[{"role":"system","content":"..."},{"role":"user","content":"..."},{"role":"assistant","content":"..."}]}',
+    alpaca:   'Alpaca format: {"instruction":"...","input":"...","output":"..."}',
     sharegpt: 'ShareGPT format: {"conversations":[{"from":"human","value":"..."},{"from":"gpt","value":"..."}]}',
   };
 
   if (!formatGuide[format]) return res.status(400).json({ error: 'Invalid format.' });
 
   try {
-    const message = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 1500,
-      system: 'You are a machine learning engineer creating fine-tuning datasets. Output only valid JSON, one per line. No markdown, no preamble.',
-      messages: [{
-        role: 'user',
-        content: `Generate ${count} high-quality fine-tuning training examples for: "${domain}". Use ${formatGuide[format]}. Each example on a new line. Make them diverse and realistic. Only output the JSON lines, nothing else.`,
-      }],
-    });
-    res.json({ text: message.content[0].text });
+    const text = await askGemini(
+      'You are a machine learning engineer creating fine-tuning datasets. Output only valid JSON, one per line. No markdown, no preamble.',
+      `Generate ${count} high-quality fine-tuning training examples for: "${domain}". Use ${formatGuide[format]}. Each example on a new line. Make them diverse and realistic. Only output the JSON lines, nothing else.`,
+      1500
+    );
+    res.json({ text });
   } catch (err) {
     console.error('Finetune error:', err.message);
     res.status(err.status || 500).json({ error: err.message });
@@ -201,5 +209,5 @@ app.post('/api/finetune', async (req, res) => {
 // ─── Start ────────────────────────────────────────────────────────────────────
 app.listen(PORT, () => {
   console.log(`\n🚀 NeuralStack server running on http://localhost:${PORT}`);
-  console.log(`   API Key: ${process.env.ANTHROPIC_API_KEY ? '✅ Loaded' : '❌ Missing — set ANTHROPIC_API_KEY in .env'}\n`);
+  console.log(`   Gemini API Key: ${process.env.GEMINI_API_KEY ? '✅ Loaded' : '❌ Missing — set GEMINI_API_KEY in .env'}\n`);
 });
